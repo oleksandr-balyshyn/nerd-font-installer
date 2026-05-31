@@ -1,0 +1,8 @@
+release: latest
+destination: ~/.local/share/fonts/NerdFonts
+refresh_font_cache: true
+families:
+  - JetBrainsMono
+  - Hack
+  - FiraCode
+  - Meslo
