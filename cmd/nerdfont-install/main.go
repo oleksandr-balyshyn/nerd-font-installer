@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 
@@ -23,65 +24,135 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "", "YAML config file; when omitted, discover config or start interactive mode")
-	dryRun := flag.Bool("dry-run", false, "print planned downloads without installing fonts")
-	showVersion := flag.Bool("version", false, "print version information and exit")
-	flag.Parse()
-
-	if *showVersion {
-		fmt.Fprintf(os.Stdout, "nerdfont-install %s (%s, %s)\n", version, commit, date)
-		return
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	cfg, err := resolveConfig(ctx, *configPath, configFlagWasProvided())
-	if err != nil {
-		if errors.Is(err, errCancelled) {
-			return
-		}
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-
-	if err := install(ctx, cfg, *dryRun); err != nil {
-		fmt.Fprintf(os.Stderr, "install fonts: %v\n", err)
-		os.Exit(1)
-	}
+	os.Exit(run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, dependencies{}))
 }
 
-func resolveConfig(ctx context.Context, configPath string, explicitConfig bool) (config.Config, error) {
+type dependencies struct {
+	loadConfig     func(string) (config.Config, error)
+	discoverConfig func() (config.Source, bool, error)
+	listReleases   func(context.Context) ([]nerdfonts.Release, error)
+	runTUI         func(context.Context, []nerdfonts.Release, tui.Options) (tui.Result, error)
+	installFonts   func(context.Context, fonts.Options) error
+	isTerminal     func(io.Reader, io.Writer) bool
+}
+
+func (d dependencies) withDefaults() dependencies {
+	if d.loadConfig == nil {
+		d.loadConfig = config.Load
+	}
+	if d.discoverConfig == nil {
+		d.discoverConfig = config.Discover
+	}
+	if d.listReleases == nil {
+		d.listReleases = nerdfonts.Client{}.Releases
+	}
+	if d.runTUI == nil {
+		d.runTUI = tui.Run
+	}
+	if d.installFonts == nil {
+		d.installFonts = fonts.Install
+	}
+	if d.isTerminal == nil {
+		d.isTerminal = isTerminal
+	}
+	return d
+}
+
+func run(
+	ctx context.Context,
+	args []string,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+	deps dependencies,
+) int {
+	deps = deps.withDefaults()
+
+	flags := flag.NewFlagSet("nerdfont-install", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("config", "", "YAML config file; when omitted, discover config or start interactive mode")
+	dryRun := flags.Bool("dry-run", false, "print planned downloads without installing fonts")
+	showVersion := flags.Bool("version", false, "print version information and exit")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	if *showVersion {
+		fmt.Fprintf(stdout, "nerdfont-install %s (%s, %s)\n", version, commit, date)
+		return 0
+	}
+
+	explicitConfig := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
+
+	cfg, err := resolveConfig(
+		ctx,
+		*configPath,
+		explicitConfig,
+		deps.isTerminal(stdin, stdout),
+		stderr,
+		deps,
+	)
+	if err != nil {
+		if errors.Is(err, errCancelled) {
+			return 0
+		}
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+
+	if err := install(ctx, cfg, *dryRun, stdout, stderr, deps.installFonts); err != nil {
+		fmt.Fprintf(stderr, "install fonts: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func resolveConfig(
+	ctx context.Context,
+	configPath string,
+	explicitConfig bool,
+	terminal bool,
+	stderr io.Writer,
+	deps dependencies,
+) (config.Config, error) {
 	if explicitConfig {
-		cfg, err := config.Load(configPath)
+		cfg, err := deps.loadConfig(configPath)
 		if err != nil {
 			return config.Config{}, fmt.Errorf("load config %s: %w", configPath, err)
 		}
 		return cfg, nil
 	}
 
-	source, found, err := config.Discover()
+	source, found, err := deps.discoverConfig()
 	if err != nil {
 		return config.Config{}, err
 	}
 	if found {
-		fmt.Fprintf(os.Stderr, "Using config %s\n", source.Path)
+		fmt.Fprintf(stderr, "Using config %s\n", source.Path)
 		return source.Config, nil
 	}
 
-	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+	if !terminal {
 		return config.Config{}, fmt.Errorf(
 			"no config found; pass --config or create ~/.nerd-config.yaml, ~/.config/nerd-config-installer/config.yaml, or config.yaml next to the binary",
 		)
 	}
 
-	fmt.Fprintln(os.Stderr, "No config found. Starting interactive mode...")
-	releases, err := nerdfonts.Client{}.Releases(ctx)
+	fmt.Fprintln(stderr, "No config found. Starting interactive mode...")
+	releases, err := deps.listReleases(ctx)
 	if err != nil {
 		return config.Config{}, err
 	}
 
-	result, err := tui.Run(ctx, releases, tui.Options{
+	result, err := deps.runTUI(ctx, releases, tui.Options{
 		Destination:      "~/.local/share/fonts/NerdFonts",
 		RefreshFontCache: true,
 	})
@@ -94,32 +165,39 @@ func resolveConfig(ctx context.Context, configPath string, explicitConfig bool) 
 	return result.Config, nil
 }
 
-func configFlagWasProvided() bool {
-	provided := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "config" {
-			provided = true
-		}
-	})
-	return provided
-}
-
-func install(ctx context.Context, cfg config.Config, dryRun bool) error {
-	return fonts.Install(ctx, fonts.Options{
+func install(
+	ctx context.Context,
+	cfg config.Config,
+	dryRun bool,
+	stdout io.Writer,
+	stderr io.Writer,
+	installFonts func(context.Context, fonts.Options) error,
+) error {
+	return installFonts(ctx, fonts.Options{
 		Release:          cfg.Release,
 		Destination:      cfg.Destination,
 		Families:         cfg.Families,
 		RefreshFontCache: cfg.RefreshFontCache,
 		DryRun:           dryRun,
-		Stdout:           os.Stdout,
-		Stderr:           os.Stderr,
+		Stdout:           stdout,
+		Stderr:           stderr,
 	})
 }
 
-func isTerminal(file *os.File) bool {
-	info, err := file.Stat()
+func isTerminal(stdin io.Reader, stdout io.Writer) bool {
+	stdinFile, stdinOK := stdin.(*os.File)
+	stdoutFile, stdoutOK := stdout.(*os.File)
+	if !stdinOK || !stdoutOK {
+		return false
+	}
+
+	stdinInfo, err := stdinFile.Stat()
 	if err != nil {
 		return false
 	}
-	return info.Mode()&os.ModeCharDevice != 0
+	stdoutInfo, err := stdoutFile.Stat()
+	if err != nil {
+		return false
+	}
+	return stdinInfo.Mode()&os.ModeCharDevice != 0 && stdoutInfo.Mode()&os.ModeCharDevice != 0
 }

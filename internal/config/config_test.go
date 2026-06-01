@@ -46,6 +46,18 @@ func TestLoadNormalizesValues(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fonts.yaml")
+	data := []byte("families: [Hack]\nfont_family: Hack\n")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() error = nil, want unknown field error")
+	}
+}
+
 func TestLoadRejectsBlankAfterTrim(t *testing.T) {
 	tests := []struct {
 		name string
@@ -151,4 +163,22 @@ func TestDiscoverPathsReturnsInvalidConfigError(t *testing.T) {
 	if err == nil {
 		t.Fatal("DiscoverPaths() error = nil, want validation error")
 	}
+}
+
+func TestDefaultPathsUsesUserConfigDir(t *testing.T) {
+	configHome := filepath.Join(t.TempDir(), "xdg")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatalf("DefaultPaths() error = %v", err)
+	}
+
+	want := filepath.Join(configHome, "nerd-config-installer", "config.yaml")
+	for _, path := range paths {
+		if path == want {
+			return
+		}
+	}
+	t.Fatalf("DefaultPaths() = %#v, want path %q", paths, want)
 }

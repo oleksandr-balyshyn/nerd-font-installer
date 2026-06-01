@@ -205,6 +205,80 @@ func TestInstallProgressWritesToStderr(t *testing.T) {
 	}
 }
 
+func TestInstallReplacesFamilyDirectoryAfterSuccessfulExtraction(t *testing.T) {
+	var stderr bytes.Buffer
+	destination := filepath.Join(t.TempDir(), "fonts")
+	existingFamily := filepath.Join(destination, "Hack")
+	if err := os.MkdirAll(existingFamily, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existingFamily, "old.ttf"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(bytes.NewReader(fontZip(t))),
+			}, nil
+		}),
+	}
+
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: destination,
+		Families:    []string{"Hack"},
+		Stderr:      &stderr,
+		HTTPClient:  client,
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(existingFamily, "Hack.ttf")); err != nil {
+		t.Fatalf("expected new font: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(existingFamily, "old.ttf")); !os.IsNotExist(err) {
+		t.Fatalf("old font should be removed, stat err = %v", err)
+	}
+}
+
+func TestInstallKeepsExistingFamilyDirectoryOnExtractionFailure(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "fonts")
+	existingFamily := filepath.Join(destination, "Hack")
+	if err := os.MkdirAll(existingFamily, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existingFont := filepath.Join(existingFamily, "old.ttf")
+	if err := os.WriteFile(existingFont, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(bytes.NewReader(noFontZip(t))),
+			}, nil
+		}),
+	}
+
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: destination,
+		Families:    []string{"Hack"},
+		HTTPClient:  client,
+	})
+	if err == nil {
+		t.Fatal("Install() error = nil, want extraction error")
+	}
+	if data, err := os.ReadFile(existingFont); err != nil || string(data) != "old" {
+		t.Fatalf("existing font = %q, %v; want old font preserved", data, err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -221,6 +295,24 @@ func fontZip(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	if _, err := entry.Write([]byte("font")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body.Bytes()
+}
+
+func noFontZip(t *testing.T) []byte {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := zip.NewWriter(&body)
+	entry, err := writer.Create("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("docs")); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {

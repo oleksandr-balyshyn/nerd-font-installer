@@ -12,10 +12,15 @@ import (
 	"time"
 )
 
-const releasesURL = "https://api.github.com/repos/ryanoasis/nerd-fonts/releases"
+const (
+	releasesURL            = "https://api.github.com/repos/ryanoasis/nerd-fonts/releases"
+	defaultMaxReleasePages = 5
+)
 
 type Client struct {
 	HTTPClient *http.Client
+	BaseURL    string
+	MaxPages   int
 }
 
 type Release struct {
@@ -30,9 +35,18 @@ func (c Client) Releases(ctx context.Context) ([]Release, error) {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	var releases []Release
-	for page := 1; ; page++ {
-		pageURL, err := withPage(releasesURL, page)
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = releasesURL
+	}
+	maxPages := c.MaxPages
+	if maxPages <= 0 {
+		maxPages = defaultMaxReleasePages
+	}
+
+	releases := []Release{}
+	for page := 1; page <= maxPages; page++ {
+		pageURL, err := withPage(baseURL, page)
 		if err != nil {
 			return nil, err
 		}

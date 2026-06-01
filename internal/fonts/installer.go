@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 type Options struct {
@@ -24,6 +26,15 @@ type Options struct {
 	Stderr           io.Writer
 	HTTPClient       *http.Client
 }
+
+var (
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	fontStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	linkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
+	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("219"))
+)
 
 func Install(ctx context.Context, opts Options) error {
 	if opts.Stdout == nil {
@@ -143,11 +154,17 @@ func installFamily(ctx context.Context, client *http.Client, release, family, ro
 	}
 
 	destination := filepath.Join(root, family)
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return fmt.Errorf("create family destination %s: %w", destination, err)
+	tempDestination, err := os.MkdirTemp(root, "."+family+"-*")
+	if err != nil {
+		return fmt.Errorf("create temporary family destination in %s: %w", root, err)
 	}
-	if err := ExtractFontZip(temp.Name(), destination); err != nil {
-		return fmt.Errorf("extract %s to %s: %w", temp.Name(), destination, err)
+	defer os.RemoveAll(tempDestination)
+
+	if err := ExtractFontZip(temp.Name(), tempDestination); err != nil {
+		return fmt.Errorf("extract %s to %s: %w", temp.Name(), tempDestination, err)
+	}
+	if err := replaceDirectory(tempDestination, destination); err != nil {
+		return err
 	}
 	return nil
 }
@@ -210,6 +227,39 @@ func extractZipFile(file *zip.File, destination string) error {
 
 	if _, err := io.Copy(out, reader); err != nil {
 		return fmt.Errorf("copy font file %s to %s: %w", file.Name, destination, err)
+	}
+	return nil
+}
+
+func replaceDirectory(source, destination string) error {
+	backup := destination + ".old"
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove old backup %s: %w", backup, err)
+	}
+
+	destinationExists := true
+	if _, err := os.Stat(destination); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect existing destination %s: %w", destination, err)
+		}
+		destinationExists = false
+	}
+
+	if destinationExists {
+		if err := os.Rename(destination, backup); err != nil {
+			return fmt.Errorf("move existing destination %s to %s: %w", destination, backup, err)
+		}
+	}
+
+	if err := os.Rename(source, destination); err != nil {
+		if destinationExists {
+			_ = os.Rename(backup, destination)
+		}
+		return fmt.Errorf("move extracted fonts %s to %s: %w", source, destination, err)
+	}
+
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove backup %s: %w", backup, err)
 	}
 	return nil
 }

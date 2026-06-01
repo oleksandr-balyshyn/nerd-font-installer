@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -28,7 +29,9 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	cfg.ApplyDefaults()
@@ -120,20 +123,22 @@ func DiscoverPaths(paths []string) (Source, bool, error) {
 }
 
 func DefaultPaths() ([]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("locate home directory: %w", err)
-	}
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate executable: %w", err)
 	}
 	executableDir := filepath.Dir(executable)
 
-	return []string{
-		filepath.Join(home, ".nerd-config.yaml"),
-		filepath.Join(home, ".config", "nerd-config-installer", "config.yaml"),
+	paths := []string{}
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths, filepath.Join(home, ".nerd-config.yaml"))
+	}
+	if userConfigDir, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(userConfigDir, "nerd-config-installer", "config.yaml"))
+	}
+	paths = append(paths,
 		filepath.Join(executableDir, "config.yaml"),
 		filepath.Join(executableDir, "nerd-config.yaml"),
-	}, nil
+	)
+	return paths, nil
 }

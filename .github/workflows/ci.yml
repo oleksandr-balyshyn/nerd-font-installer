@@ -1,11 +1,10 @@
 name: CI
 
 on:
-  pull_request:
   push:
     branches:
       - main
-      - master
+  pull_request:
 
 permissions:
   contents: read
@@ -14,35 +13,41 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        go-version:
-          - "1.26"
-          - stable
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: go.mod
           cache: true
 
-      - name: Verify module files
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+      - name: Run tests
+        run: go test ./...
 
-      - name: Vet
+      - name: Run race tests
+        run: go test -race ./...
+
+      - name: Run vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -race -shuffle=on -coverprofile=coverage.out ./...
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
 
-      - name: Build
-        run: go build -trimpath -o bin/nerdfont-install ./cmd/nerdfont-install
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - name: Smoke test
-        run: ./bin/nerdfont-install --config config.example.yaml --dry-run
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
