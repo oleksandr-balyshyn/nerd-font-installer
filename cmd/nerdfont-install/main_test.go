@@ -117,6 +117,18 @@ func TestRunReturnsUsageCodeForInvalidFlags(t *testing.T) {
 	}
 }
 
+func TestRunReturnsUsageCodeForInvalidIconMode(t *testing.T) {
+	var stderr bytes.Buffer
+
+	code := run(t.Context(), []string{"--icons", "sparkles"}, strings.NewReader(""), &bytes.Buffer{}, &stderr, dependencies{})
+	if code != 2 {
+		t.Fatalf("run() code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "invalid --icons") {
+		t.Fatalf("stderr = %q, want icon mode error", stderr.String())
+	}
+}
+
 func TestRunErrorsWhenNoConfigAndNonInteractive(t *testing.T) {
 	var stderr bytes.Buffer
 
@@ -218,8 +230,9 @@ func TestRunUsesDiscoveredConfig(t *testing.T) {
 
 func TestRunInteractiveCancellationIsSuccess(t *testing.T) {
 	var stderr bytes.Buffer
+	var gotIcons tui.IconMode
 
-	code := run(t.Context(), nil, strings.NewReader(""), &bytes.Buffer{}, &stderr, dependencies{
+	code := run(t.Context(), []string{"--icons", "nerd"}, strings.NewReader(""), &bytes.Buffer{}, &stderr, dependencies{
 		discoverConfig: func() (config.Source, bool, error) {
 			return config.Source{}, false, nil
 		},
@@ -229,11 +242,15 @@ func TestRunInteractiveCancellationIsSuccess(t *testing.T) {
 		listReleases: func(context.Context) ([]nerdfonts.Release, error) {
 			return []nerdfonts.Release{{Name: "v3.4.0", TagName: "v3.4.0", Families: []string{"Hack"}}}, nil
 		},
-		runTUI: func(context.Context, []nerdfonts.Release, tui.Options) (tui.Result, error) {
+		runTUI: func(_ context.Context, _ []nerdfonts.Release, opts tui.Options) (tui.Result, error) {
+			gotIcons = opts.Icons
 			return tui.Result{Cancelled: true}, nil
 		},
 	})
 	if code != 0 {
 		t.Fatalf("run() code = %d, want 0; stderr = %q", code, stderr.String())
+	}
+	if gotIcons != tui.IconNerd {
+		t.Fatalf("TUI icons = %q, want %q", gotIcons, tui.IconNerd)
 	}
 }

@@ -367,6 +367,7 @@ nerdfont-install [flags]
 | `--config <path>` | Use a specific YAML config file. |
 | `--dry-run` | Show what would happen without installing. |
 | `--font-names` | Print YAML-ready font family names and exit. |
+| `--icons <mode>` | Set interactive TUI icons: `auto`, `nerd`, `unicode`, or `ascii`. Defaults to `auto`, which avoids requiring Nerd Font glyphs. |
 | `--version` | Print version info and exit. |
 
 Examples:
@@ -376,6 +377,8 @@ nerdfont-install --dry-run
 nerdfont-install --config fonts.yaml
 nerdfont-install --config fonts.yaml --dry-run
 nerdfont-install --font-names
+nerdfont-install --icons nerd
+nerdfont-install --icons ascii
 nerdfont-install --version
 ```
 
@@ -511,23 +514,39 @@ Smoke test:
 
 ## Development
 
+Run the full local validation suite:
+
+```bash
+make verify
+```
+
 Run tests:
 
 ```bash
-go test ./...
+make test
 ```
 
 Run vet:
 
 ```bash
-go vet ./...
+make vet
 ```
 
 Run lint:
 
 ```bash
-go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
+make lint
 ```
+
+Format Go code:
+
+```bash
+make fmt
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Design
 

@@ -25,6 +25,7 @@ type Options struct {
 	Destination      string
 	RefreshFontCache bool
 	Output           io.Writer
+	Icons            IconMode
 }
 
 type step int
@@ -36,14 +37,66 @@ const (
 )
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	helpStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	accentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("219"))
-	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("63"))
+	bannerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("81")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(1, 3)
+	subtitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+	keyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196"))
+	successStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("42")).
+			Bold(true)
+	accentStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("81")).
+			Bold(true)
+	pathStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("219"))
+	pillStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("230")).
+			Background(lipgloss.Color("63")).
+			Bold(true).
+			Padding(0, 1)
+	spinnerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("63"))
 )
+
+const (
+	IconAuto    IconMode = "auto"
+	IconNerd    IconMode = "nerd"
+	IconUnicode IconMode = "unicode"
+	IconASCII   IconMode = "ascii"
+)
+
+type IconMode string
+
+type iconSet struct {
+	Mode       IconMode
+	Title      string
+	Package    string
+	Release    string
+	Font       string
+	Folder     string
+	Checked    string
+	Unchecked  string
+	Selected   string
+	Ready      string
+	Launch     string
+	Toolbox    string
+	Separator  string
+	NerdFamily map[string]string
+}
 
 type item struct {
 	title       string
@@ -60,7 +113,7 @@ func (i item) Description() string {
 }
 
 func (i item) FilterValue() string {
-	return i.value
+	return strings.Join([]string{i.title, i.description, i.value}, " ")
 }
 
 type model struct {
@@ -68,6 +121,7 @@ type model struct {
 	releases         []nerdfonts.Release
 	releaseList      list.Model
 	familyList       list.Model
+	icons            iconSet
 	selectedFamilies map[string]bool
 	selectedRelease  nerdfonts.Release
 	destination      string
@@ -152,7 +206,7 @@ func (m loadingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = errorStyle.Render(msg.err.Error())
 			return m, tea.Quit
 		}
-		m.message = successStyle.Render("✅ Releases loaded")
+		m.message = successStyle.Render("OK  Releases loaded")
 		return m, tea.Quit
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -177,7 +231,7 @@ func Run(ctx context.Context, releases []nerdfonts.Release, opts Options) (Resul
 		destination = "~/.local/share/fonts/NerdFonts"
 	}
 
-	m := newModel(releases, destination, opts.RefreshFontCache)
+	m := newModel(releases, destination, opts.RefreshFontCache, opts.Icons)
 	programOptions := []tea.ProgramOption{
 		tea.WithContext(ctx),
 		tea.WithAltScreen(),
@@ -224,27 +278,40 @@ func Run(ctx context.Context, releases []nerdfonts.Release, opts Options) (Resul
 	}, nil
 }
 
-func newModel(releases []nerdfonts.Release, destination string, refreshFontCache bool) model {
+func newModel(releases []nerdfonts.Release, destination string, refreshFontCache bool, iconMode IconMode) model {
+	icons := resolveIconSet(iconMode)
 	items := make([]list.Item, 0, len(releases))
 	for _, release := range releases {
-		description := fmt.Sprintf("%d font archives", len(release.Families))
+		description := fmt.Sprintf("%s  %d font archives  %s  %s ready for terminals and editors",
+			icons.Font,
+			len(release.Families),
+			icons.Separator,
+			icons.Toolbox,
+		)
 		items = append(items, item{
-			title:       release.TagName,
+			title:       icons.Release + " " + release.TagName,
 			description: description,
-			value:       release.TagName + " " + release.Name,
+			value:       release.TagName,
 		})
 	}
 
 	delegate := newDelegate()
 	releaseList := list.New(items, delegate, 0, 0)
-	releaseList.Title = "Select Nerd Fonts release"
+	releaseList.Title = icons.Package + "  Select Nerd Fonts release"
 	releaseList.SetShowStatusBar(false)
 	releaseList.SetFilteringEnabled(true)
+	releaseList.Styles.Title = releaseList.Styles.Title.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("63")).
+		Bold(true)
+	releaseList.Styles.PaginationStyle = helpStyle
+	releaseList.Styles.HelpStyle = helpStyle
 
 	return model{
 		step:             stepRelease,
 		releases:         releases,
 		releaseList:      releaseList,
+		icons:            icons,
 		selectedFamilies: map[string]bool{},
 		destination:      destination,
 		refreshFontCache: refreshFontCache,
@@ -258,9 +325,9 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.releaseList = setListSize(m.releaseList, msg.Width, msg.Height-6)
+		m.releaseList = setListSize(m.releaseList, msg.Width, msg.Height-10)
 		if m.step == stepFamilies {
-			m.familyList = setListSize(m.familyList, msg.Width, msg.Height-8)
+			m.familyList = setListSize(m.familyList, msg.Width, msg.Height-12)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -313,7 +380,7 @@ func (m model) updateReleaseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	for _, release := range m.releases {
-		if release.TagName == selected.title {
+		if release.TagName == selected.value {
 			m.selectedRelease = release
 			m.step = stepFamilies
 			m.selectedFamilies = map[string]bool{}
@@ -365,22 +432,28 @@ func (m model) updateFamilyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) newFamilyList() list.Model {
 	delegate := newDelegate()
 	familyList := list.New(m.familyItems(), delegate, m.releaseList.Width(), m.releaseList.Height())
-	familyList.Title = "Select font families"
+	familyList.Title = m.icons.Title + "  Select font families"
 	familyList.SetShowStatusBar(false)
 	familyList.SetFilteringEnabled(true)
+	familyList.Styles.Title = familyList.Styles.Title.
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("63")).
+		Bold(true)
+	familyList.Styles.PaginationStyle = helpStyle
+	familyList.Styles.HelpStyle = helpStyle
 	return familyList
 }
 
 func (m model) familyItems() []list.Item {
 	items := make([]list.Item, 0, len(m.selectedRelease.Families))
 	for _, family := range m.selectedRelease.Families {
-		marker := "○"
+		marker := m.icons.Unchecked
 		if m.selectedFamilies[family] {
-			marker = "✅"
+			marker = m.icons.Checked
 		}
 		items = append(items, item{
-			title:       marker + " " + family,
-			description: m.selectedRelease.TagName,
+			title:       marker + "  " + m.iconForFamily(family) + "  " + family,
+			description: fmt.Sprintf("%s %s  %s  %s", m.icons.Release, m.selectedRelease.TagName, m.icons.Separator, familyHint(family)),
 			value:       family,
 		})
 	}
@@ -390,16 +463,117 @@ func (m model) familyItems() []list.Item {
 func newDelegate() list.DefaultDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("81")).
+		Foreground(lipgloss.Color("230")).
 		BorderForeground(lipgloss.Color("63")).
+		Background(lipgloss.Color("57")).
 		Bold(true)
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
 		Foreground(lipgloss.Color("219")).
 		BorderForeground(lipgloss.Color("63"))
-	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("252"))
+	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("252")).Bold(true)
 	delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color("245"))
 	delegate.Styles.FilterMatch = delegate.Styles.FilterMatch.Foreground(lipgloss.Color("214")).Bold(true)
 	return delegate
+}
+
+func (m model) iconForFamily(family string) string {
+	key := strings.ToLower(strings.ReplaceAll(family, " ", ""))
+	if icon, ok := m.icons.NerdFamily[key]; ok {
+		return icon
+	}
+	return m.icons.Font
+}
+
+func familyHint(family string) string {
+	key := strings.ToLower(family)
+	switch {
+	case strings.Contains(key, "mono"):
+		return "monospace favorite"
+	case strings.Contains(key, "code"):
+		return "coding ligatures"
+	case strings.Contains(key, "symbol"):
+		return "glyph toolkit"
+	default:
+		return "Nerd Font patched"
+	}
+}
+
+func resolveIconSet(mode IconMode) iconSet {
+	switch mode {
+	case IconNerd:
+		return iconSet{
+			Mode:      IconNerd,
+			Title:     "󰛖",
+			Package:   "",
+			Release:   "󰐕",
+			Font:      "",
+			Folder:    "",
+			Checked:   "󰄲",
+			Unchecked: "󰄱",
+			Selected:  "✅",
+			Ready:     "✅",
+			Launch:    "🚀",
+			Toolbox:   "🧰",
+			Separator: "•",
+			NerdFamily: map[string]string{
+				"0xproto":         "",
+				"adwaitamono":     "",
+				"anonymouspro":    "󰈙",
+				"caskaydiacove":   "",
+				"cascadiacode":    "",
+				"cascadiamono":    "",
+				"firacode":        "",
+				"firago":          "",
+				"hack":            "󰌌",
+				"ibmplexmono":     "󰡱",
+				"iosevka":         "󰘦",
+				"jetbrainsmono":   "",
+				"meslo":           "",
+				"monaspace":       "",
+				"robotomono":      "󱚤",
+				"saucecodepro":    "",
+				"spacemono":       "󰎆",
+				"symbolsnerdfont": "󰣆",
+				"ubuntu":          "",
+				"ubuntumono":      "",
+				"victormono":      "󰘦",
+			},
+		}
+	case IconASCII:
+		return iconSet{
+			Mode:       IconASCII,
+			Title:      "NF",
+			Package:    "pkg",
+			Release:    "tag",
+			Font:       "Aa",
+			Folder:     "dir",
+			Checked:    "[x]",
+			Unchecked:  "[ ]",
+			Selected:   "OK",
+			Ready:      "OK",
+			Launch:     ">>",
+			Toolbox:    "tools",
+			Separator:  "-",
+			NerdFamily: map[string]string{},
+		}
+	default:
+		return iconSet{
+			Mode:       IconUnicode,
+			Title:      "✦",
+			Package:    "▣",
+			Release:    "◆",
+			Font:       "Aa",
+			Folder:     "⌂",
+			Checked:    "☑",
+			Unchecked:  "☐",
+			Selected:   "✓",
+			Ready:      "✓",
+			Launch:     "→",
+			Toolbox:    "◇",
+			Separator:  "•",
+			NerdFamily: map[string]string{},
+		}
+	}
 }
 
 func setListSize(model list.Model, width, height int) (resized list.Model) {
@@ -436,27 +610,47 @@ func (m model) View() string {
 	switch m.step {
 	case stepRelease:
 		return strings.Join([]string{
-			titleStyle.Render("Nerd Font Installer"),
-			"Choose the Nerd Fonts release to install from.",
+			m.banner(),
+			subtitleStyle.Render(m.icons.Launch + " Choose a release, then collect patched fonts with devicons, symbols, and terminal glyphs."),
 			m.releaseList.View(),
-			helpStyle.Render("enter: choose release  /: filter  q: quit"),
+			help("enter", "choose release", "/", "filter", "q", "quit"),
 		}, "\n")
 	case stepFamilies:
 		summary := fmt.Sprintf(
-			"Release %s -> %s (%d selected)",
-			accentStyle.Render(m.selectedRelease.TagName),
-			pathStyle.Render(m.destination),
-			m.selectedCount(),
+			"%s  %s  %s",
+			pillStyle.Render(fmt.Sprintf("%s %s", m.icons.Release, m.selectedRelease.TagName)),
+			pathStyle.Render(m.icons.Folder+" "+m.destination),
+			successStyle.Render(fmt.Sprintf("%s %d selected", m.icons.Selected, m.selectedCount())),
 		)
 		return strings.Join([]string{
-			titleStyle.Render("Nerd Font Installer"),
+			m.banner(),
 			summary,
 			m.familyList.View(),
-			helpStyle.Render("space: toggle  a: all/none  enter: install  b/esc: back  /: filter  q: quit"),
+			help("space", "toggle", "a", "all/none", "enter", "install", "b/esc", "back", "/", "filter", "q", "quit"),
 		}, "\n")
 	case stepDone:
-		return successStyle.Render("✅ Ready to install selected fonts")
+		return successStyle.Render(m.icons.Ready + "  Ready to install selected fonts")
 	default:
 		return ""
 	}
+}
+
+func (m model) banner() string {
+	lines := []string{
+		titleStyle.Render(m.icons.Title + "  Nerd Font Installer  " + m.icons.Package + "  " + m.icons.Font),
+		subtitleStyle.Render("Terminal fonts, devicons, ligatures, and patched glyphs in one pass " + m.icons.Launch),
+	}
+	return bannerStyle.Render(strings.Join(lines, "\n"))
+}
+
+func help(parts ...string) string {
+	if len(parts)%2 != 0 {
+		return helpStyle.Render(strings.Join(parts, " "))
+	}
+
+	segments := make([]string, 0, len(parts)/2)
+	for i := 0; i < len(parts); i += 2 {
+		segments = append(segments, keyStyle.Render(parts[i])+helpStyle.Render(": "+parts[i+1]))
+	}
+	return strings.Join(segments, helpStyle.Render("  •  "))
 }

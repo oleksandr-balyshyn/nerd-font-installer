@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/w0rxbend/nerd-font-installer/internal/config"
 	"github.com/w0rxbend/nerd-font-installer/internal/fonts"
@@ -76,8 +77,14 @@ func run(
 	configPath := flags.String("config", "", "YAML config file; when omitted, discover config or start interactive mode")
 	dryRun := flags.Bool("dry-run", false, "print planned downloads without installing fonts")
 	showFontNames := flags.Bool("font-names", false, "print YAML-ready Nerd Font family names and exit")
+	iconMode := flags.String("icons", string(tui.IconAuto), "TUI icon mode: auto, nerd, unicode, or ascii")
 	showVersion := flags.Bool("version", false, "print version information and exit")
 	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	icons, err := parseIconMode(*iconMode)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "%v\n", err)
 		return 2
 	}
 
@@ -106,6 +113,7 @@ func run(
 		*configPath,
 		explicitConfig,
 		deps.isTerminal(stdin, stdout),
+		icons,
 		stderr,
 		deps,
 	)
@@ -176,6 +184,7 @@ func resolveConfig(
 	configPath string,
 	explicitConfig bool,
 	terminal bool,
+	icons tui.IconMode,
 	stderr io.Writer,
 	deps dependencies,
 ) (config.Config, error) {
@@ -211,6 +220,7 @@ func resolveConfig(
 	result, err := deps.runTUI(ctx, releases, tui.Options{
 		Destination:      "~/.local/share/fonts/NerdFonts",
 		RefreshFontCache: true,
+		Icons:            icons,
 	})
 	if err != nil {
 		return config.Config{}, err
@@ -219,6 +229,16 @@ func resolveConfig(
 		return config.Config{}, errCancelled
 	}
 	return result.Config, nil
+}
+
+func parseIconMode(raw string) (tui.IconMode, error) {
+	mode := tui.IconMode(strings.ToLower(strings.TrimSpace(raw)))
+	switch mode {
+	case tui.IconAuto, tui.IconNerd, tui.IconUnicode, tui.IconASCII:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid --icons %q; use auto, nerd, unicode, or ascii", raw)
+	}
 }
 
 func install(

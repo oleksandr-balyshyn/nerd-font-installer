@@ -3,6 +3,7 @@ package fonts
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -288,6 +289,9 @@ func replaceDirectory(source, destination string) error {
 
 func refreshFontCache(ctx context.Context, root string, stdout, stderr io.Writer) error {
 	if _, err := exec.LookPath("fc-cache"); err != nil {
+		if !errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("look up fc-cache: %w", err)
+		}
 		_, _ = fmt.Fprintf(stderr, "%s fc-cache is not available; skipping font cache refresh.\n", warnStyle.Render("•"))
 		return nil
 	}

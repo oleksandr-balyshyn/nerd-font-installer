@@ -58,7 +58,7 @@ func (c Client) Releases(ctx context.Context) ([]Release, error) {
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("User-Agent", "nerdfont-install")
 
-		resp, err := client.Do(req)
+		resp, err := client.Do(req) //nolint:bodyclose // decodeReleases owns and closes the response body.
 		if err != nil {
 			return nil, fmt.Errorf("list Nerd Fonts releases: %w", err)
 		}

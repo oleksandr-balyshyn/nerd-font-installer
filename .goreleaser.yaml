@@ -33,6 +33,7 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
     files:
+      - LICENSE
       - README.md
       - config.example.yaml
 

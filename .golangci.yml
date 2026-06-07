@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errorlint
+    - forcetypeassert
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - staticcheck
+    - unconvert
+    - whitespace
+  exclusions:
+    generated: lax
+    paths:
+      - ^\.agents/
+      - ^bin/
+      - ^dist/
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - ^\.agents/
+      - ^bin/
+      - ^dist/
