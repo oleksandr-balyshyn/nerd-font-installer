@@ -44,6 +44,9 @@ the font cache. Audience: dotfiles / fresh-machine / dev-container setup.
   boundary — do not duplicate it.
 - `internal/tui` — Bubble Tea picker: release step → families step, with
   `IconMode` (auto/nerd/unicode/ascii) icon sets.
+- `snap/snapcraft.yaml` — Snapcraft packaging for the CLI. It builds the Go
+  command with the same ldflags contract and uses classic confinement so the
+  tool can write real user font directories and refresh fontconfig.
 
 ## Invariants & design tenets (do not break)
 
@@ -73,6 +76,12 @@ the font cache. Audience: dotfiles / fresh-machine / dev-container setup.
   **Tests must pass under `-race`** (the install path is concurrent).
 - CI runs vet, lint, test matrix (ubuntu+macOS), race, coverage, govulncheck,
   actionlint. Mirror that locally before pushing.
+- Release CI publishes versioned GitHub releases for `v*` tags and refreshes a
+  moving `latest` release with stable asset names for fixed download URLs.
+- Snap CI builds snaps on PRs/main/tags/manual runs. Non-PR runs publish to the
+  Snap Store (`main` → `edge`, `v*` tags → `stable`, manual → chosen channel)
+  using the `SNAPCRAFT_STORE_CREDENTIALS` repository secret. The snap name must
+  be registered and classic confinement approved before public stable release.
 - Commits: Conventional Commits + `Co-Authored-By` trailer. Branch off `main`.
 - Reusable Go skills live under `.agents/skills/` (golang-*, testing, security,
   review). The review→refactor methodology is the
