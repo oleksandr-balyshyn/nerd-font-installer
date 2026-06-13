@@ -3,6 +3,8 @@ package fonts
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"os"
@@ -415,6 +417,68 @@ func TestInstallFailsWhenOneFamilyDownloadFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Inter") {
 		t.Fatalf("Install() error = %v, want it to name the failing family Inter", err)
+	}
+}
+
+func TestInstallVerifiesMatchingChecksum(t *testing.T) {
+	zipBytes := fontZip(t)
+	sum := sha256.Sum256(zipBytes)
+	manifest := hex.EncodeToString(sum[:]) + "  Hack.zip\n"
+	client := &http.Client{Transport: checksumRoutingTransport(manifest, zipBytes)}
+
+	destination := filepath.Join(t.TempDir(), "fonts")
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: destination,
+		Families:    []string{"Hack"},
+		HTTPClient:  client,
+		Stderr:      io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "Hack")); err != nil {
+		t.Fatalf("family not installed: %v", err)
+	}
+}
+
+func TestInstallRejectsChecksumMismatch(t *testing.T) {
+	zipBytes := fontZip(t)
+	manifest := strings.Repeat("a", 64) + "  Hack.zip\n" // deliberately wrong digest
+	client := &http.Client{Transport: checksumRoutingTransport(manifest, zipBytes)}
+
+	destination := filepath.Join(t.TempDir(), "fonts")
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: destination,
+		Families:    []string{"Hack"},
+		HTTPClient:  client,
+		Stderr:      io.Discard,
+	})
+	if err == nil {
+		t.Fatal("Install() error = nil, want checksum mismatch")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("Install() error = %v, want checksum mismatch", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "Hack")); !os.IsNotExist(err) {
+		t.Fatalf("family must not be installed on mismatch, stat err = %v", err)
+	}
+}
+
+// checksumRoutingTransport serves the SHA-256 manifest for the checksum URL and
+// the zip bytes for any font download.
+func checksumRoutingTransport(manifest string, zipBytes []byte) roundTripFunc {
+	return func(req *http.Request) (*http.Response, error) {
+		body := zipBytes
+		if strings.HasSuffix(req.URL.Path, "SHA-256.txt") {
+			body = []byte(manifest)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(bytes.NewReader(body)),
+		}, nil
 	}
 }
 

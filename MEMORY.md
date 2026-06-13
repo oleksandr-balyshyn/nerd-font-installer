@@ -61,6 +61,10 @@ the font cache. Audience: dotfiles / fresh-machine / dev-container setup.
    `*http.Client` (tests use `roundTripFunc` + in-memory zips, or `httptest`).
 6. **Security defaults:** strict YAML, `url.PathEscape` on URL segments,
    `exec.CommandContext` (no shell) for `fc-cache`, size caps on all copies.
+7. **Download integrity:** each zip is verified against the release's
+   `SHA-256.txt` manifest (`fetchChecksums` → per-family digest). Verification
+   is *best-effort*: a missing manifest warns and proceeds; a digest **mismatch
+   aborts** the install. Do not weaken the mismatch-is-fatal rule.
 
 ## Dev / build workflow
 
@@ -76,9 +80,6 @@ the font cache. Audience: dotfiles / fresh-machine / dev-container setup.
 
 ## Open / deferred decisions (need a human call)
 
-- **Download integrity:** Nerd Fonts publishes `SHA-256.txt` per release
-  (`<sha256>␣␣<Family>.zip`); SHA-256 verification of downloads is planned but
-  not yet implemented (verify-when-available, abort on mismatch).
 - **Release tooling duplication:** `.goreleaser.yaml` and the hand-rolled bash
   in `.github/workflows/release.yml` are two sources of truth — pick one.
 - **Config filename stems** are inconsistent (`.nerd-config.yaml`,

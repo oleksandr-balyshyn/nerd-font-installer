@@ -2,7 +2,10 @@ package fonts
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -117,11 +120,16 @@ func Install(ctx context.Context, opts Options) error {
 	families := dedupeFamilies(opts.Families)
 	stderr := &syncWriter{w: opts.Stderr}
 
+	// Fetch the release's published SHA-256 manifest once. Verification is
+	// best-effort: a missing manifest leaves checksums nil and installs proceed
+	// unverified (with a warning); a hash mismatch later is fatal.
+	checksums := fetchChecksums(ctx, opts.HTTPClient, opts.Release, stderr)
+
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(min(len(families), maxConcurrentInstalls))
 	for _, family := range families {
 		group.Go(func() error {
-			if err := installFamily(groupCtx, opts.HTTPClient, opts.Release, family, root, stderr); err != nil {
+			if err := installFamily(groupCtx, opts.HTTPClient, opts.Release, family, root, checksums[family], stderr); err != nil {
 				return fmt.Errorf("install Nerd Font family %s: %w", family, err)
 			}
 			return nil
@@ -186,7 +194,7 @@ func validateOptions(opts Options) error {
 	return nil
 }
 
-func installFamily(ctx context.Context, client *http.Client, release, family, root string, stderr io.Writer) error {
+func installFamily(ctx context.Context, client *http.Client, release, family, root, wantChecksum string, stderr io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, perDownloadTimeout)
 	defer cancel()
 
@@ -225,8 +233,10 @@ func installFamily(ctx context.Context, client *http.Client, release, family, ro
 		return fmt.Errorf("download %s: size %d bytes exceeds %d byte limit", url, resp.ContentLength, maxDownloadBytes)
 	}
 	// LimitReader backstops a missing or dishonest Content-Length; the extra
-	// byte lets us detect a stream that runs past the cap.
-	written, err := io.Copy(temp, io.LimitReader(resp.Body, maxDownloadBytes+1))
+	// byte lets us detect a stream that runs past the cap. Tee through a hasher
+	// so the download can be verified against the published checksum.
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temp, hasher), io.LimitReader(resp.Body, maxDownloadBytes+1))
 	if err != nil {
 		return fmt.Errorf("copy download %s to %s: %w", url, temp.Name(), err)
 	}
@@ -235,6 +245,11 @@ func installFamily(ctx context.Context, client *http.Client, release, family, ro
 	}
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("finalize download %s: %w", temp.Name(), err)
+	}
+	if wantChecksum != "" {
+		if got := hex.EncodeToString(hasher.Sum(nil)); got != wantChecksum {
+			return fmt.Errorf("checksum mismatch for %s: downloaded sha256 %s, expected %s", family, got, wantChecksum)
+		}
 	}
 
 	destination := filepath.Join(root, family)
@@ -254,6 +269,62 @@ func installFamily(ctx context.Context, client *http.Client, release, family, ro
 	}
 	_, _ = fmt.Fprintf(stderr, "%s Installed %s into %s\n", successStyle.Render("✅"), fontStyle.Render(family), pathStyle.Render(destination))
 	return nil
+}
+
+// ChecksumURL returns the URL of the SHA-256 manifest published alongside a
+// release's font archives.
+func ChecksumURL(release string) string {
+	if release == "" || release == nerdfonts.Latest {
+		return "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/SHA-256.txt"
+	}
+	return fmt.Sprintf("https://github.com/ryanoasis/nerd-fonts/releases/download/%s/SHA-256.txt", url.PathEscape(release))
+}
+
+// fetchChecksums downloads and parses the release's SHA-256 manifest into a map
+// of family name to lowercase hex digest. Verification is best-effort: if the
+// manifest cannot be fetched it warns and returns nil so installs proceed
+// unverified. Only a later digest mismatch (in installFamily) is fatal.
+func fetchChecksums(ctx context.Context, client *http.Client, release string, stderr io.Writer) map[string]string {
+	checksumURL := ChecksumURL(release)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		warnChecksums(stderr, err)
+		return nil
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		warnChecksums(stderr, err)
+		return nil
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		warnChecksums(stderr, fmt.Errorf("%s", resp.Status))
+		return nil
+	}
+
+	checksums := map[string]string{}
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 1<<20))
+	for scanner.Scan() {
+		// Each line is "<sha256 hex>  <filename>"; keep only the .zip archives.
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 || !strings.EqualFold(filepath.Ext(fields[1]), ".zip") {
+			continue
+		}
+		family := strings.TrimSuffix(fields[1], filepath.Ext(fields[1]))
+		checksums[family] = strings.ToLower(fields[0])
+	}
+	if err := scanner.Err(); err != nil {
+		// A partially-read manifest is treated as unavailable rather than fatal;
+		// any family it did not cover simply installs unverified.
+		warnChecksums(stderr, err)
+	}
+	return checksums
+}
+
+func warnChecksums(stderr io.Writer, cause error) {
+	_, _ = fmt.Fprintf(stderr, "%s Checksum manifest unavailable (%v); installing without integrity verification.\n", warnStyle.Render("•"), cause)
 }
 
 func ReleaseURL(release, family string) string {
