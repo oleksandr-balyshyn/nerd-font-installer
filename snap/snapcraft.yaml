@@ -1,0 +1,45 @@
+name: nerdfont-install
+title: Nerd Font Installer
+summary: Install Nerd Fonts from GitHub releases.
+description: |
+  nerdfont-install is a scriptable CLI for installing Nerd Fonts from a YAML
+  config or an interactive terminal picker. It downloads release archives from
+  GitHub, installs selected font families, and refreshes the font cache.
+
+license: MIT
+source-code: https://github.com/worxbend/nerd-font-installer
+issues: https://github.com/worxbend/nerd-font-installer/issues
+base: core24
+grade: stable
+confinement: classic
+adopt-info: nerdfont-install
+
+apps:
+  nerdfont-install:
+    command: bin/nerdfont-install
+
+parts:
+  nerdfont-install:
+    plugin: go
+    source: .
+    build-snaps:
+      - go/1.26/stable
+    stage-packages:
+      - fontconfig
+    override-pull: |
+      craftctl default
+      version="$(git -C "${CRAFT_PART_SRC}" describe --tags --always --dirty 2>/dev/null || printf dev)"
+      craftctl set version="${version#v}"
+    override-build: |
+      version="$(craftctl get version)"
+      commit="$(git -C "${CRAFT_PART_SRC}" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
+      date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      cd "${CRAFT_PART_SRC}"
+      go mod download all
+      mkdir -p "${CRAFT_PART_INSTALL}/bin"
+      CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags "-s -w -X main.version=${version} -X main.commit=${commit} -X main.date=${date}" \
+        -o "${CRAFT_PART_INSTALL}/bin/nerdfont-install" \
+        ./cmd/nerdfont-install

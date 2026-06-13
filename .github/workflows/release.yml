@@ -39,7 +39,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-latest-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -188,12 +188,13 @@ jobs:
             "darwin arm64"
           )
 
-          rm -rf dist
-          mkdir -p dist
+          rm -rf dist dist-latest
+          mkdir -p dist dist-latest
 
           for platform in "${platforms[@]}"; do
             read -r goos goarch <<< "${platform}"
             archive="nerdfont-install_${version}_${goos}_${goarch}"
+            latest_archive="nerdfont-install_latest_${goos}_${goarch}"
             staging="dist/${archive}"
 
             mkdir -p "${staging}"
@@ -205,10 +206,15 @@ jobs:
 
             cp LICENSE README.md config.example.yaml "${staging}/"
             tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+            mv "${staging}" "dist-latest/${latest_archive}"
+            tar -C dist-latest -czf "dist-latest/${latest_archive}.tar.gz" "${latest_archive}"
+            rm -rf "dist-latest/${latest_archive}"
             rm -rf "${staging}"
           done
 
           cd dist
+          sha256sum ./*.tar.gz > checksums.txt
+          cd ../dist-latest
           sha256sum ./*.tar.gz > checksums.txt
           echo "release_tag=${release_tag}" >> "${GITHUB_ENV}"
           echo "version=${version}" >> "${GITHUB_ENV}"
@@ -249,16 +255,29 @@ jobs:
             --latest
 
       - name: Publish latest release
-        if: github.ref_type != 'tag' && github.event_name != 'workflow_dispatch'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest dist/* \
-            --target "${GITHUB_SHA}" \
-            --title "Latest build" \
-            --notes "Automated latest build from ${GITHUB_SHA}." \
-            --prerelease \
-            --latest=false
+
+          git tag -f latest "${GITHUB_SHA}"
+          git push --force origin refs/tags/latest
+
+          notes="Automated latest build from ${GITHUB_SHA}."
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest \
+              --target "${GITHUB_SHA}" \
+              --title "Latest build" \
+              --notes "${notes}" \
+              --prerelease \
+              --latest=false
+            gh release upload latest dist-latest/* --clobber
+          else
+            gh release create latest dist-latest/* \
+              --target "${GITHUB_SHA}" \
+              --title "Latest build" \
+              --notes "${notes}" \
+              --prerelease \
+              --latest=false
+          fi

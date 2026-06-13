@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/w0rxbend/nerd-font-installer/internal/fontname"
 	"gopkg.in/yaml.v3"
 )
 
@@ -69,7 +70,7 @@ func (c Config) Validate() error {
 	seen := map[string]bool{}
 	for _, family := range c.Families {
 		family = strings.TrimSpace(family)
-		if err := validateFamilyName(family); err != nil {
+		if err := fontname.Validate(family); err != nil {
 			return err
 		}
 		if seen[family] {
@@ -78,23 +79,6 @@ func (c Config) Validate() error {
 		seen[family] = true
 	}
 	return nil
-}
-
-func validateFamilyName(family string) error {
-	switch {
-	case family == "":
-		return fmt.Errorf("font family names cannot be empty")
-	case family == "." || family == "..":
-		return fmt.Errorf("unsafe font family name %q", family)
-	case strings.Contains(family, "/") || strings.Contains(family, "\\"):
-		return fmt.Errorf("unsafe font family name %q", family)
-	case filepath.IsAbs(family):
-		return fmt.Errorf("unsafe font family name %q", family)
-	case filepath.Base(family) != family:
-		return fmt.Errorf("unsafe font family name %q", family)
-	default:
-		return nil
-	}
 }
 
 func Discover() (Source, bool, error) {

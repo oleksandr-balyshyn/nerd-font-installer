@@ -82,22 +82,31 @@ nerdfont-install
 
 ### 1. Get the Binary
 
-Download the latest release archive for your system from the GitHub releases
-page.
+Download the latest release archive for your system from the fixed `latest`
+GitHub release URL.
 
 Pick one:
 
-| System | Archive |
+| System | URL |
 | --- | --- |
-| Linux Intel/AMD | `nerdfont-install_latest_linux_amd64.tar.gz` |
-| Linux ARM64 | `nerdfont-install_latest_linux_arm64.tar.gz` |
-| macOS Intel | `nerdfont-install_latest_darwin_amd64.tar.gz` |
-| macOS Apple Silicon | `nerdfont-install_latest_darwin_arm64.tar.gz` |
+| Linux Intel/AMD | `https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/nerdfont-install_latest_linux_amd64.tar.gz` |
+| Linux ARM64 | `https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/nerdfont-install_latest_linux_arm64.tar.gz` |
+| macOS Intel | `https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/nerdfont-install_latest_darwin_amd64.tar.gz` |
+| macOS Apple Silicon | `https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/nerdfont-install_latest_darwin_arm64.tar.gz` |
+
+For example:
+
+```bash
+curl -LO https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/nerdfont-install_latest_linux_amd64.tar.gz
+curl -LO https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+```
 
 Extract it:
 
 ```bash
 tar -xzf nerdfont-install_latest_linux_amd64.tar.gz
+cd nerdfont-install_latest_linux_amd64
 ```
 
 Move it somewhere on your `PATH`:
@@ -119,6 +128,18 @@ If `~/.local/bin` is not on your `PATH`, add this to your shell config:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+### Snap Package
+
+On Linux, after the Snap Store package is published, you can install it with:
+
+```bash
+sudo snap install nerdfont-install --classic
+```
+
+The snap uses classic confinement because the CLI installs fonts into the real
+user font directory and refreshes fontconfig. Classic confinement requires Snap
+Store approval before the package can be released publicly.
 
 ### 2. Create a Config
 
@@ -343,12 +364,17 @@ doubt.
 
 ## Where Config Files Are Found
 
-When `--config` is not provided, the tool checks:
+When `--config` is not provided, the tool checks the `NERDFONT_CONFIG`
+environment variable, then the following locations in order:
 
 1. `~/.nerd-config.yaml`
 2. `~/.config/nerd-config-installer/config.yaml`
 3. `config.yaml` next to the binary
 4. `nerd-config.yaml` next to the binary
+
+Set `NERDFONT_CONFIG=/path/to/fonts.yaml` to point at a config without passing
+`--config` every time — handy in dotfiles, CI, and containers. It is honored by
+`--font-names` as well.
 
 The recommended location is:
 
@@ -542,6 +568,31 @@ Format Go code:
 
 ```bash
 make fmt
+```
+
+## Release and Snap Publishing
+
+The release workflow publishes versioned GitHub releases for `v*` tags and also
+refreshes a moving `latest` release. Use the fixed download form:
+
+```text
+https://github.com/w0rxbend/nerd-font-installer/releases/download/latest/<asset>
+```
+
+The Snap workflow builds snaps on pull requests, `main`, tags, and manual runs.
+It publishes only on non-PR runs:
+
+- `main` publishes to `edge`
+- `v*` tags publish to `stable`
+- manual runs publish to the selected channel
+
+Before publishing snaps, register the `nerdfont-install` snap name and add a
+repository secret named `SNAPCRAFT_STORE_CREDENTIALS`. Generate it with:
+
+```bash
+snapcraft export-login --snaps=nerdfont-install \
+  --acls package_access,package_push,package_update,package_release \
+  snapcraft-login.txt
 ```
 
 ## License

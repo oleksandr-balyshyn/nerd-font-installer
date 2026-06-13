@@ -1,7 +1,10 @@
 package nerdfonts
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -102,6 +105,40 @@ func TestClientReleasesFetchesAndFiltersPages(t *testing.T) {
 	}
 }
 
+func TestClientReleasesContinuesPastFullyFilteredPage(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Query().Get("page") {
+		case "1":
+			// Non-empty API page that filters to zero usable releases: only a
+			// draft. Pagination must not stop here.
+			writeJSON(t, w, []map[string]any{
+				{"name": "draft", "tag_name": "v9.9.9", "draft": true, "assets": []map[string]any{{"name": "Hack.zip"}}},
+			})
+		case "2":
+			writeJSON(t, w, []map[string]any{
+				{"name": "v3.4.0", "tag_name": "v3.4.0", "assets": []map[string]any{{"name": "Hack.zip"}}},
+			})
+		default:
+			writeJSON(t, w, []map[string]any{})
+		}
+	}))
+	defer server.Close()
+
+	releases, err := Client{BaseURL: server.URL, MaxPages: 5}.Releases(t.Context())
+	if err != nil {
+		t.Fatalf("Releases() error = %v", err)
+	}
+	want := []Release{{Name: "v3.4.0", TagName: "v3.4.0", Families: []string{"Hack"}}}
+	if !reflect.DeepEqual(releases, want) {
+		t.Fatalf("Releases() = %#v, want %#v", releases, want)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3 (page 1 filtered-empty must not stop pagination)", requests)
+	}
+}
+
 func TestClientReleasesStopsAtMaxPages(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +193,78 @@ func TestClientReleasesErrors(t *testing.T) {
 	}
 }
 
+// Unit tests for ReleaseNotFoundError.
+
+func TestReleaseNotFoundErrorMessage(t *testing.T) {
+	err := ReleaseNotFoundError{Tag: "v1.2.3"}
+	got := err.Error()
+	if got != `nerd fonts release "v1.2.3" was not found` {
+		t.Fatalf("ReleaseNotFoundError.Error() = %q, want standard message", got)
+	}
+}
+
+func TestReleaseNotFoundErrorIsNotErrNoReleases(t *testing.T) {
+	var target ReleaseNotFoundError
+	if !errors.As(ReleaseNotFoundError{Tag: "v1.0.0"}, &target) {
+		t.Fatal("errors.As for ReleaseNotFoundError should succeed")
+	}
+	if errors.Is(ReleaseNotFoundError{Tag: "v1.0.0"}, ErrNoReleases) {
+		t.Fatal("ReleaseNotFoundError must not be ErrNoReleases")
+	}
+}
+
+// Unit test for ErrNoReleases.
+
+func TestErrNoReleasesIsDistinct(t *testing.T) {
+	if ErrNoReleases == nil {
+		t.Fatal("ErrNoReleases is nil")
+	}
+	if ErrNoReleases.Error() == "" {
+		t.Fatal("ErrNoReleases.Error() is empty")
+	}
+}
+
+// Unit test for Latest const.
+
+func TestLatestConst(t *testing.T) {
+	if Latest != "latest" {
+		t.Fatalf("Latest = %q, want \"latest\"", Latest)
+	}
+}
+
+// Regression: an all-filtered page (e.g. all drafts) must not terminate
+// pagination — only an empty raw API page should stop the loop.
+// Uses a mock HTTP client to avoid network dependencies.
+func TestClientReleasesErrNoReleasesWhenAllFilteredOut(t *testing.T) {
+	page := 0
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			page++
+			// Pages 1 and 2: non-empty raw page, but only drafts (filtered out).
+			// Page 3+: empty page to stop pagination.
+			var body []byte
+			if page <= 2 {
+				body = mustEncodeJSON(t, []map[string]any{
+					{"name": "draft", "tag_name": "v9.9.9", "draft": true, "assets": []map[string]any{{"name": "Hack.zip"}}},
+				})
+			} else {
+				body = mustEncodeJSON(t, []map[string]any{})
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewReader(body)),
+			}, nil
+		}),
+	}
+
+	_, err := Client{HTTPClient: client, BaseURL: "http://mock.invalid", MaxPages: 2}.Releases(t.Context())
+	if !errors.Is(err, ErrNoReleases) {
+		t.Fatalf("Releases() error = %v, want ErrNoReleases when all pages filtered", err)
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
 
@@ -163,4 +272,20 @@ func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// mustEncodeJSON encodes value to JSON bytes, failing the test on error.
+func mustEncodeJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	return b
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
