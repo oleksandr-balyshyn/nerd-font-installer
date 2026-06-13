@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/w0rxbend/nerd-font-installer/internal/fontname"
 )
 
 type Options struct {
@@ -107,28 +108,11 @@ func validateOptions(opts Options) error {
 		return fmt.Errorf("at least one Nerd Font family is required")
 	}
 	for _, family := range opts.Families {
-		if err := validateFamilyName(family); err != nil {
+		if err := fontname.Validate(family); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func validateFamilyName(family string) error {
-	switch {
-	case family == "":
-		return fmt.Errorf("font family names cannot be empty")
-	case family == "." || family == "..":
-		return fmt.Errorf("unsafe Nerd Font family name %q", family)
-	case strings.Contains(family, "/") || strings.Contains(family, "\\"):
-		return fmt.Errorf("unsafe Nerd Font family name %q", family)
-	case filepath.IsAbs(family):
-		return fmt.Errorf("unsafe Nerd Font family name %q", family)
-	case filepath.Base(family) != family:
-		return fmt.Errorf("unsafe Nerd Font family name %q", family)
-	default:
-		return nil
-	}
 }
 
 func installFamily(ctx context.Context, client *http.Client, release, family, root string, stderr io.Writer) error {
