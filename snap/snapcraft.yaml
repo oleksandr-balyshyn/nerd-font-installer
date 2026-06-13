@@ -7,8 +7,8 @@ description: |
   GitHub, installs selected font families, and refreshes the font cache.
 
 license: MIT
-source-code: https://github.com/w0rxbend/nerd-font-installer
-issues: https://github.com/w0rxbend/nerd-font-installer/issues
+source-code: https://github.com/worxbend/nerd-font-installer
+issues: https://github.com/worxbend/nerd-font-installer/issues
 base: core24
 grade: stable
 confinement: classic
