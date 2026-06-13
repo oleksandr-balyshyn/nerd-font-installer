@@ -352,6 +352,72 @@ func TestExtractFontZipRejectsOversizeArchiveTotal(t *testing.T) {
 	}
 }
 
+func TestInstallInstallsMultipleFamilies(t *testing.T) {
+	zipBytes := fontZip(t) // precomputed once; the transport runs on worker goroutines.
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(bytes.NewReader(zipBytes)),
+			}, nil
+		}),
+	}
+
+	destination := filepath.Join(t.TempDir(), "fonts")
+	families := []string{"Hack", "JetBrainsMono", "FiraCode"}
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: destination,
+		Families:    families,
+		HTTPClient:  client,
+		Stderr:      io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	for _, family := range families {
+		entries, err := os.ReadDir(filepath.Join(destination, family))
+		if err != nil || len(entries) == 0 {
+			t.Fatalf("family %s not installed: entries = %d, err = %v", family, len(entries), err)
+		}
+	}
+}
+
+func TestInstallFailsWhenOneFamilyDownloadFails(t *testing.T) {
+	zipBytes := fontZip(t)
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "Inter") {
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Status:     "404 Not Found",
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(bytes.NewReader(zipBytes)),
+			}, nil
+		}),
+	}
+
+	err := Install(t.Context(), Options{
+		Release:     "latest",
+		Destination: filepath.Join(t.TempDir(), "fonts"),
+		Families:    []string{"Hack", "Inter", "JetBrainsMono"},
+		HTTPClient:  client,
+		Stderr:      io.Discard,
+	})
+	if err == nil {
+		t.Fatal("Install() error = nil, want failure for one family")
+	}
+	if !strings.Contains(err.Error(), "Inter") {
+		t.Fatalf("Install() error = %v, want it to name the failing family Inter", err)
+	}
+}
+
 func TestInstallReportsDownloadErrors(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -12,11 +12,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/w0rxbend/nerd-font-installer/internal/fontname"
 	"github.com/w0rxbend/nerd-font-installer/internal/nerdfonts"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	// maxConcurrentInstalls bounds how many font families download and extract
+	// at once. Downloads are latency/bandwidth bound and all target one host, so
+	// a small fan-out captures most of the speedup without stressing the server.
+	maxConcurrentInstalls = 4
+	// perDownloadTimeout bounds a single family's download+extract, derived per
+	// family so it composes with group cancellation instead of a global clock.
+	perDownloadTimeout = 10 * time.Minute
 )
 
 type Options struct {
@@ -56,7 +68,13 @@ func Install(ctx context.Context, opts Options) error {
 		opts.Stderr = io.Discard
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: 10 * time.Minute}
+		// Per-download timeouts are applied via context, so leave the client
+		// timeout unset. Raise the per-host connection caps from the default 2
+		// so concurrent downloads to github.com reuse pooled connections.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.MaxIdleConnsPerHost = maxConcurrentInstalls
+		transport.MaxConnsPerHost = maxConcurrentInstalls
+		opts.HTTPClient = &http.Client{Transport: transport}
 	}
 	opts = normalizeOptions(opts)
 	if opts.Release == "" {
@@ -91,16 +109,59 @@ func Install(ctx context.Context, opts Options) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("create destination %s: %w", root, err)
 	}
-	for _, family := range opts.Families {
-		if err := installFamily(ctx, opts.HTTPClient, opts.Release, family, root, opts.Stderr); err != nil {
-			return fmt.Errorf("install Nerd Font family %s: %w", family, err)
-		}
+
+	// Each family writes to disjoint filesystem paths (root/<family>, a unique
+	// MkdirTemp staging dir, and a per-family ".old" backup), so installs are
+	// independent and safe to run concurrently. Dedupe first as a defensive
+	// guard: two workers on the same family name would collide on those paths.
+	families := dedupeFamilies(opts.Families)
+	stderr := &syncWriter{w: opts.Stderr}
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(min(len(families), maxConcurrentInstalls))
+	for _, family := range families {
+		group.Go(func() error {
+			if err := installFamily(groupCtx, opts.HTTPClient, opts.Release, family, root, stderr); err != nil {
+				return fmt.Errorf("install Nerd Font family %s: %w", family, err)
+			}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
 	}
 
 	if opts.RefreshFontCache {
 		return refreshFontCache(ctx, root, opts.Stdout, opts.Stderr)
 	}
 	return nil
+}
+
+// syncWriter serializes whole-line progress writes from concurrent installs so
+// lines from different families never interleave mid-line. lipgloss rendering
+// happens in memory before Write, so only the Write needs guarding.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+func dedupeFamilies(families []string) []string {
+	seen := make(map[string]bool, len(families))
+	unique := make([]string, 0, len(families))
+	for _, family := range families {
+		if seen[family] {
+			continue
+		}
+		seen[family] = true
+		unique = append(unique, family)
+	}
+	return unique
 }
 
 func normalizeOptions(opts Options) Options {
@@ -126,6 +187,9 @@ func validateOptions(opts Options) error {
 }
 
 func installFamily(ctx context.Context, client *http.Client, release, family, root string, stderr io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, perDownloadTimeout)
+	defer cancel()
+
 	url := ReleaseURL(release, family)
 	_, _ = fmt.Fprintf(stderr, "%s Installing Nerd Font %s from %s\n", spinnerStyle.Render("⠋"), fontStyle.Render(family), linkStyle.Render(url))
 
