@@ -75,14 +75,15 @@ func Install(ctx context.Context, opts Options) error {
 		// Per-download timeouts are applied via context, so leave the client
 		// timeout unset. Raise the per-host connection caps from the default 2
 		// so concurrent downloads to github.com reuse pooled connections.
+		var transport *http.Transport
 		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
-			transport := defaultTransport.Clone()
-			transport.MaxIdleConnsPerHost = maxConcurrentInstalls
-			transport.MaxConnsPerHost = maxConcurrentInstalls
-			opts.HTTPClient = &http.Client{Transport: transport}
+			transport = defaultTransport.Clone()
 		} else {
-			opts.HTTPClient = &http.Client{Transport: http.DefaultTransport}
+			transport = &http.Transport{}
 		}
+		transport.MaxIdleConnsPerHost = maxConcurrentInstalls
+		transport.MaxConnsPerHost = maxConcurrentInstalls
+		opts.HTTPClient = &http.Client{Transport: transport}
 	}
 	opts = normalizeOptions(opts)
 	if opts.Release == "" {
