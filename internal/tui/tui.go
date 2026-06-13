@@ -250,6 +250,14 @@ func Run(ctx context.Context, releases []nerdfonts.Release, opts Options) (Resul
 	if !ok {
 		return Result{}, fmt.Errorf("unexpected TUI model %T", finalModel)
 	}
+	return m.result()
+}
+
+// result derives the install configuration from the final model state. It is
+// separated from Run so the selection-to-config mapping (sorted families, and
+// "finished with nothing selected" treated as a cancel) is unit-testable
+// without driving a real terminal program.
+func (m model) result() (Result, error) {
 	if m.cancelled {
 		return Result{Cancelled: true}, nil
 	}
@@ -498,84 +506,10 @@ func familyHint(family string) string {
 	}
 }
 
-func resolveIconSet(mode IconMode) iconSet {
-	switch mode {
-	case IconNerd:
-		return iconSet{
-			Mode:      IconNerd,
-			Title:     "󰛖",
-			Package:   "",
-			Release:   "󰐕",
-			Font:      "",
-			Folder:    "",
-			Checked:   "󰄲",
-			Unchecked: "󰄱",
-			Selected:  "✅",
-			Ready:     "✅",
-			Launch:    "🚀",
-			Toolbox:   "🧰",
-			Separator: "•",
-			NerdFamily: map[string]string{
-				"0xproto":         "",
-				"adwaitamono":     "",
-				"anonymouspro":    "󰈙",
-				"caskaydiacove":   "",
-				"cascadiacode":    "",
-				"cascadiamono":    "",
-				"firacode":        "",
-				"firago":          "",
-				"hack":            "󰌌",
-				"ibmplexmono":     "󰡱",
-				"iosevka":         "󰘦",
-				"jetbrainsmono":   "",
-				"meslo":           "",
-				"monaspace":       "",
-				"robotomono":      "󱚤",
-				"saucecodepro":    "",
-				"spacemono":       "󰎆",
-				"symbolsnerdfont": "󰣆",
-				"ubuntu":          "",
-				"ubuntumono":      "",
-				"victormono":      "󰘦",
-			},
-		}
-	case IconASCII:
-		return iconSet{
-			Mode:       IconASCII,
-			Title:      "NF",
-			Package:    "pkg",
-			Release:    "tag",
-			Font:       "Aa",
-			Folder:     "dir",
-			Checked:    "[x]",
-			Unchecked:  "[ ]",
-			Selected:   "OK",
-			Ready:      "OK",
-			Launch:     ">>",
-			Toolbox:    "tools",
-			Separator:  "-",
-			NerdFamily: map[string]string{},
-		}
-	default:
-		return iconSet{
-			Mode:       IconUnicode,
-			Title:      "✦",
-			Package:    "▣",
-			Release:    "◆",
-			Font:       "Aa",
-			Folder:     "⌂",
-			Checked:    "☑",
-			Unchecked:  "☐",
-			Selected:   "✓",
-			Ready:      "✓",
-			Launch:     "→",
-			Toolbox:    "◇",
-			Separator:  "•",
-			NerdFamily: map[string]string{},
-		}
-	}
-}
-
+// setListSize clamps to positive dimensions (bubbles' list.SetSize panics on a
+// zero/negative size) and recovers as a belt-and-suspenders guard against any
+// other size-related panic from the dependency, returning the unresized model
+// rather than crashing the TUI on a pathological terminal size.
 func setListSize(model list.Model, width, height int) (resized list.Model) {
 	if width < 1 {
 		width = 1
