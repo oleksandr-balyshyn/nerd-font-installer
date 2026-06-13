@@ -16,6 +16,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/w0rxbend/nerd-font-installer/internal/fontname"
+	"github.com/w0rxbend/nerd-font-installer/internal/nerdfonts"
 )
 
 type Options struct {
@@ -59,7 +60,7 @@ func Install(ctx context.Context, opts Options) error {
 	}
 	opts = normalizeOptions(opts)
 	if opts.Release == "" {
-		opts.Release = "latest"
+		opts.Release = nerdfonts.Latest
 	}
 	if err := validateOptions(opts); err != nil {
 		return err
@@ -193,7 +194,7 @@ func installFamily(ctx context.Context, client *http.Client, release, family, ro
 
 func ReleaseURL(release, family string) string {
 	family = url.PathEscape(family)
-	if release == "latest" {
+	if release == "" || release == nerdfonts.Latest {
 		return fmt.Sprintf("https://github.com/ryanoasis/nerd-fonts/releases/latest/download/%s.zip", family)
 	}
 	return fmt.Sprintf("https://github.com/ryanoasis/nerd-fonts/releases/download/%s/%s.zip", url.PathEscape(release), family)

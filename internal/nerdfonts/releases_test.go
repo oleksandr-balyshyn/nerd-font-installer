@@ -102,6 +102,40 @@ func TestClientReleasesFetchesAndFiltersPages(t *testing.T) {
 	}
 }
 
+func TestClientReleasesContinuesPastFullyFilteredPage(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Query().Get("page") {
+		case "1":
+			// Non-empty API page that filters to zero usable releases: only a
+			// draft. Pagination must not stop here.
+			writeJSON(t, w, []map[string]any{
+				{"name": "draft", "tag_name": "v9.9.9", "draft": true, "assets": []map[string]any{{"name": "Hack.zip"}}},
+			})
+		case "2":
+			writeJSON(t, w, []map[string]any{
+				{"name": "v3.4.0", "tag_name": "v3.4.0", "assets": []map[string]any{{"name": "Hack.zip"}}},
+			})
+		default:
+			writeJSON(t, w, []map[string]any{})
+		}
+	}))
+	defer server.Close()
+
+	releases, err := Client{BaseURL: server.URL, MaxPages: 5}.Releases(t.Context())
+	if err != nil {
+		t.Fatalf("Releases() error = %v", err)
+	}
+	want := []Release{{Name: "v3.4.0", TagName: "v3.4.0", Families: []string{"Hack"}}}
+	if !reflect.DeepEqual(releases, want) {
+		t.Fatalf("Releases() = %#v, want %#v", releases, want)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3 (page 1 filtered-empty must not stop pagination)", requests)
+	}
+}
+
 func TestClientReleasesStopsAtMaxPages(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

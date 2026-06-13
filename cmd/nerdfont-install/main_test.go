@@ -97,8 +97,8 @@ func TestRunPrintsFontNamesReportsMissingRelease(t *testing.T) {
 			return []nerdfonts.Release{{TagName: "v3.4.0", Families: []string{"Hack"}}}, nil
 		},
 	})
-	if code != 1 {
-		t.Fatalf("run() code = %d, want 1", code)
+	if code != 2 {
+		t.Fatalf("run() code = %d, want 2 (user-correctable: unknown release)", code)
 	}
 	if !strings.Contains(stderr.String(), `release "v1.0.0" was not found`) {
 		t.Fatalf("stderr = %q, want missing release", stderr.String())
@@ -140,8 +140,8 @@ func TestRunErrorsWhenNoConfigAndNonInteractive(t *testing.T) {
 			return false
 		},
 	})
-	if code != 1 {
-		t.Fatalf("run() code = %d, want 1", code)
+	if code != 2 {
+		t.Fatalf("run() code = %d, want 2 (user-correctable: missing config)", code)
 	}
 	if !strings.Contains(stderr.String(), "no config found") {
 		t.Fatalf("stderr = %q, want no config error", stderr.String())

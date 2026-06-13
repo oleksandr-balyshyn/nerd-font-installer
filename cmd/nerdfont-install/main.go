@@ -22,6 +22,7 @@ var (
 	date    = "unknown"
 
 	errCancelled = errors.New("cancelled")
+	errNoConfig  = errors.New("no config found")
 )
 
 func main() {
@@ -103,7 +104,7 @@ func run(
 	if *showFontNames {
 		if err := printFontNames(ctx, *configPath, explicitConfig, stdout, deps); err != nil {
 			_, _ = fmt.Fprintf(stderr, "%v\n", err)
-			return 1
+			return exitCodeFor(err)
 		}
 		return 0
 	}
@@ -122,7 +123,7 @@ func run(
 			return 0
 		}
 		_, _ = fmt.Fprintf(stderr, "%v\n", err)
-		return 1
+		return exitCodeFor(err)
 	}
 
 	if err := install(ctx, cfg, *dryRun, stdout, stderr, deps.installFonts); err != nil {
@@ -132,6 +133,21 @@ func run(
 	return 0
 }
 
+// exitCodeFor maps an error to a process exit code: 2 for user-input problems
+// the caller can correct (missing config, unknown or absent release), 1 for
+// runtime failures (network, filesystem, install).
+func exitCodeFor(err error) int {
+	var notFound nerdfonts.ReleaseNotFoundError
+	switch {
+	case errors.As(err, &notFound),
+		errors.Is(err, nerdfonts.ErrNoReleases),
+		errors.Is(err, errNoConfig):
+		return 2
+	default:
+		return 1
+	}
+}
+
 func printFontNames(
 	ctx context.Context,
 	configPath string,
@@ -139,7 +155,7 @@ func printFontNames(
 	stdout io.Writer,
 	deps dependencies,
 ) error {
-	release := "latest"
+	release := nerdfonts.Latest
 	if explicitConfig {
 		cfg, err := deps.loadConfig(configPath)
 		if err != nil {
@@ -166,9 +182,9 @@ func printFontNames(
 
 func selectRelease(releases []nerdfonts.Release, release string) (nerdfonts.Release, error) {
 	if len(releases) == 0 {
-		return nerdfonts.Release{}, fmt.Errorf("no Nerd Fonts releases found")
+		return nerdfonts.Release{}, nerdfonts.ErrNoReleases
 	}
-	if release == "" || release == "latest" {
+	if release == "" || release == nerdfonts.Latest {
 		return releases[0], nil
 	}
 	for _, candidate := range releases {
@@ -176,7 +192,7 @@ func selectRelease(releases []nerdfonts.Release, release string) (nerdfonts.Rele
 			return candidate, nil
 		}
 	}
-	return nerdfonts.Release{}, fmt.Errorf("nerd fonts release %q was not found", release)
+	return nerdfonts.Release{}, nerdfonts.ReleaseNotFoundError{Tag: release}
 }
 
 func resolveConfig(
@@ -207,7 +223,8 @@ func resolveConfig(
 
 	if !terminal {
 		return config.Config{}, fmt.Errorf(
-			"no config found; pass --config or create ~/.nerd-config.yaml, ~/.config/nerd-config-installer/config.yaml, or config.yaml next to the binary",
+			"%w; pass --config or create ~/.nerd-config.yaml, ~/.config/nerd-config-installer/config.yaml, or config.yaml next to the binary",
+			errNoConfig,
 		)
 	}
 
